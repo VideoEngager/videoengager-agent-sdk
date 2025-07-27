@@ -7,6 +7,10 @@
     "package.json",
     "README.md"
   ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/VideoEngager/videoengager-agent-sdk"
+  },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "module": "dist/index.mjs",
