@@ -2,7 +2,7 @@
   "name": "videoengager-agent-sdk",
   "private": "true",
   "description": "VideoEngager Agent SDK for integrating video calling capabilities for VideoEngager agents into your applications.",
-  "version": "0.0.21",
+  "version": "0.0.22",
   "files": [
     "dist/*",
     "package.json",
