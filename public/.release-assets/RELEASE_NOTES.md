@@ -1,6 +1,6 @@
-![Product update v0.0.22](https://github.com/VideoEngager/videoengager-agent-sdk/releases/download/v0.0.22/release-img.png)
+![Product update v0.0.23](https://github.com/VideoEngager/videoengager-agent-sdk/releases/download/v0.0.23/RELEASE_IMAGE.png)
 
-## Product Update v0.0.22
+## Product Update v0.0.23
 
 ### Changes
 
