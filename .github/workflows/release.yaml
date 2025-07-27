@@ -3,7 +3,7 @@ name: Publish package to npm
 on:
   workflow_dispatch:          # manual trigger
   release:
-    types: [published]        # fires on every release event
+    types: [published, released]        # fires on every release event
 
 permissions:
   contents: read
