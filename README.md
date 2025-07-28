@@ -1104,12 +1104,8 @@ await init({
 
 For technical support, integration assistance, or questions about this SDK:
 
-- **Documentation**: [VideoEngager Developer Portal](https://docs.videoengager.com)
+- **Documentation**: [VideoEngager Developer Portal](https://videoengager.github.io/)
 - **Support Email**: support@videoengager.com
-
-## � License
-
-This package is proprietary software. All rights reserved. Unauthorized copying, distribution, or use is strictly prohibited.
 
 ---
 

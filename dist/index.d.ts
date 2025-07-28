@@ -1520,4 +1520,4 @@ declare const off: {
     <K extends keyof VeEventMap>(event: K, handler: K extends keyof VeEventMap ? (payload: VeEventMap[K]) => void | Promise<void> : never): void;
 };
 
-export { VEErrorCodes, VEErrorDetails, VERSION, VideoEngagerAgent, VideoEngagerAgentError, call, destroy, endCall, getInstance, init, isInitialized, off, on };
+export { VEErrorCodes, VEErrorDetails, VERSION, VideoEngagerAgent, VideoEngagerAgentError, call, VideoEngagerAgent as default, destroy, endCall, getInstance, init, isInitialized, off, on };
