@@ -1,3 +1,11 @@
+## v3.0.1
+
+# Changes
+
+Improvement and fixes
+
+---
+
 ## v3.0.0
 
 # Changes
