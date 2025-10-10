@@ -297,14 +297,18 @@ declare class EventEmitter<T extends EventMap<T> = DefaultEventMap> {
      */
     on<K extends keyof T>(event: K, handler: DefaultHandler<K, T>, options?: { async?: boolean }): () => void;
     on<K extends '*'>(event: K, handler: WildcardTuple<T>, options?: { async?: boolean }): () => void;
-    
+    /** Alias for `.on()` */
+    addListener<K extends keyof T>(event: K, handler: DefaultHandler<K, T>, options?: { async?: boolean }): () => void;
+    addListener<K extends '*'>(event: K, handler: WildcardTuple<T>, options?: { async?: boolean }): () => void;
+
     /**
      * Removes a specific handler for a given event.
      * @param event The event name
      * @param handler The handler to remove
      */
     off<K extends keyof T>(event: K, handler: DefaultHandler<K, T>): void;
-    
+    /** Alias for `.off()` */
+    removeListener<K extends keyof T>(event: K, handler: DefaultHandler<K, T>): void;
     /**
      * Emits an event to all listeners.
      * @param event The event name
@@ -347,14 +351,30 @@ declare interface EventEmitter<T extends EventMap<T> = DefaultEventMap> {
      */
     on<K extends keyof T>(event: K, handler: DefaultHandler<K, T>, options?: { async?: boolean }): () => void;
     on<K extends '*'>(event: K, handler: WildcardTuple<T>, options?: { async?: boolean }): () => void;
-    
+    /** Alias for `.on()` */
+    addListener<K extends keyof T>(event: K, handler: DefaultHandler<K, T>, options?: { async?: boolean }): () => void;
+    /** Alias for `.on()` */
+    addListener<K extends '*'>(event: K, handler: WildcardTuple<T>, options?: { async?: boolean }): () => void;
     /**
      * Removes a specific handler for a given event.
      * @param event The event name
      * @param handler The handler to remove
      */
     off<K extends keyof T>(event: K, handler: DefaultHandler<K, T>): void;
+    /** Alias for `.off()` */
+    removeListener<K extends keyof T>(event: K, handler: DefaultHandler<K, T>): void;
+    /** Alias for `.off()` */
+    removeListener<K extends '*'>(event: K, handler: WildcardTuple<T>): void;
     
+    /**
+     * Register a one-time listener for a specific event.
+     * @param event The event name
+     * @param handler The callback function
+     * @param options Configuration options
+     * @returns Unsubscribe function
+     */
+    once<K extends keyof T>(event: K, handler: DefaultHandler<K, T>, options?: { async?: boolean }): () => void;
+    once<K extends '*'>(event: K, handler: WildcardTuple<T>, options?: { async?: boolean }): () => void;
     /**
      * Emits an event to all listeners.
      * @param event The event name
@@ -362,7 +382,13 @@ declare interface EventEmitter<T extends EventMap<T> = DefaultEventMap> {
      * @param options Configuration options
      * @returns Promise that resolves when complete
      */
-    emit<K extends keyof T>(event: K, payload: T[K], options?: { awaitListeners?: boolean }): Promise<void>;
+    emit<K extends keyof T>(
+        ...args: T extends DefaultEventMap
+            ? [event: K, payload?: any, options?: { awaitListeners?: boolean }]
+            : (T[K] extends void | undefined
+                ? [event: K, payload?: T[K], options?: { awaitListeners?: boolean }]
+                : [event: K, payload: T[K], options?: { awaitListeners?: boolean }])
+    ): Promise<void>;
     
     /**
      * Gracefully shut down the bus, waiting for in-flight events.
