@@ -98,7 +98,7 @@ declare class GenericAuth implements AuthenticationModuleImpl<'generic', Generic
     authenticate(): {
         environment: string;
         pak: string;
-        agentEmail: string;
+        email: string;
     };
     validateConfigs(): void;
 }
