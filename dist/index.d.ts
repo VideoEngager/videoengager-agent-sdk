@@ -317,14 +317,14 @@ declare class EventEmitter<T extends EventMap<T> = DefaultEventMap> {
      * @returns Promise that resolves when complete
      */
     emit<K extends keyof T>(event: K, payload: T[K], options?: { awaitListeners?: boolean }): Promise<void>;
-    
+
     /**
      * Gracefully shut down the bus, waiting for in-flight events.
      * @param timeoutMs Maximum time to wait for pending operations (default: 5000ms)
      * @returns Promise that resolves when shutdown is complete
      */
     shutdown(timeoutMs?: number): Promise<void>;
-    
+
     /**
      * Alias for `.on()`
      * @param event The event name
@@ -332,7 +332,7 @@ declare class EventEmitter<T extends EventMap<T> = DefaultEventMap> {
      * @returns Unsubscribe function
      */
     subscribe<K extends keyof T>(event: K, handler: DefaultHandler<K, T>): () => void;
-    
+
     /**
      * Get number of registered listeners.
      * @param event Optional event name to count listeners for
@@ -365,7 +365,7 @@ declare interface EventEmitter<T extends EventMap<T> = DefaultEventMap> {
     removeListener<K extends keyof T>(event: K, handler: DefaultHandler<K, T>): void;
     /** Alias for `.off()` */
     removeListener<K extends '*'>(event: K, handler: WildcardTuple<T>): void;
-    
+
     /**
      * Register a one-time listener for a specific event.
      * @param event The event name
@@ -375,6 +375,40 @@ declare interface EventEmitter<T extends EventMap<T> = DefaultEventMap> {
      */
     once<K extends keyof T>(event: K, handler: DefaultHandler<K, T>, options?: { async?: boolean }): () => void;
     once<K extends '*'>(event: K, handler: WildcardTuple<T>, options?: { async?: boolean }): () => void;
+
+    /**
+     * Waits for a specific event to be emitted, with an optional timeout.
+     * @param event The event name
+     * @param timeoutMs Optional timeout in milliseconds (default: 5000ms) if timeoutMs is -1, wait indefinitely
+     * @param filter Optional predicate to decide whether a payload should resolve the wait
+     * @param onCancelBehavior Whether cancel() should resolve or reject the promise (default: 'resolve')
+     * @returns An object containing a promise that resolves with the event payload and a cancel function
+     */
+    waitFor<K extends keyof T>(
+        event: K,
+        timeoutMs?: number,
+        filter?: (payload: T[K]) => boolean,
+        onCancelBehavior?: 'resolve' | 'reject'
+    ): { promise: Promise<T[K]>; cancel: (resolvedValue?: T[K]) => void };
+
+    /**
+     * Waits for any one of multiple events to be emitted.
+     * @param eventNames Array of event names to wait for
+     * @param timeoutMs Optional timeout in milliseconds (default: 5000ms), -1 to wait indefinitely
+     * @param filter Optional predicate to decide whether a payload should resolve the wait
+     * @param onCancelBehavior Whether cancel() should resolve or reject the promise (default: 'resolve')
+     * @returns An object containing a promise that resolves with the event name and payload, and a cancel function
+     */
+    waitForAny<K extends keyof T>(
+        eventNames: K[],
+        timeoutMs?: number,
+        filter?: <E extends K>(eventName: E, payload: T[E]) => boolean,
+        onCancelBehavior?: 'resolve' | 'reject'
+    ): {
+        promise: Promise<{ [E in K]: { event: E; payload: T[E] } }[K]>;
+        cancel: (resolvedValue?: any) => void
+    };
+
     /**
      * Emits an event to all listeners.
      * @param event The event name
@@ -389,14 +423,14 @@ declare interface EventEmitter<T extends EventMap<T> = DefaultEventMap> {
                 ? [event: K, payload?: T[K], options?: { awaitListeners?: boolean }]
                 : [event: K, payload: T[K], options?: { awaitListeners?: boolean }])
     ): Promise<void>;
-    
+
     /**
      * Gracefully shut down the bus, waiting for in-flight events.
      * @param timeoutMs Maximum time to wait for pending operations (default: 5000ms)
      * @returns Promise that resolves when shutdown is complete
      */
     shutdown(timeoutMs?: number): Promise<void>;
-    
+
     /**
      * Alias for `.on()`
      * @param event The event name
@@ -404,13 +438,159 @@ declare interface EventEmitter<T extends EventMap<T> = DefaultEventMap> {
      * @returns Unsubscribe function
      */
     subscribe<K extends keyof T>(event: K, handler: DefaultHandler<K, T>): () => void;
-    
+
     /**
      * Get number of registered listeners.
      * @param event Optional event name to count listeners for
      * @returns Number of listeners
      */
     getListenerCount(event?: string): number;
+}
+
+/**
+ * Strategy for executing compensation actions
+ */
+type CompensationStrategy = 'sequential' | 'parallel' | 'sequential-reversed';
+/**
+ * Callback to determine whether compensations should be executed based on the error
+ * @param error The error that caused the operation to fail
+ * @returns true to execute compensations, false to skip them
+ */
+type ShouldCompensateCallback = (error: Error) => boolean;
+/**
+ * CompensationContext provides a structured way to register cleanup/rollback actions
+ * that should be executed when an operation fails, is aborted, or times out.
+ *
+ * This implements the Saga pattern's compensation concept, where each forward action
+ * can have a corresponding compensation action to undo its effects.
+ *
+ * @see {@link https://microservices.io/patterns/data/saga.html | Saga Pattern}
+ *
+ * @example
+ * ```typescript
+ * await promiseManager.run('createUser', async (signal, compensations) => {
+ *   const user = await api.createUser(data);
+ *   compensations.register(() => api.deleteUser(user.id));
+ *
+ *   const role = await api.assignRole(user.id, 'admin');
+ *   compensations.registerAsync(async () => {
+ *     await api.removeRole(user.id, role.id);
+ *   });
+ *
+ *   const profile = await api.createProfile(user.id, profileData);
+ *   compensations.registerIf(
+ *     profile.isPublic,
+ *     () => api.deleteProfile(profile.id)
+ *   );
+ *
+ *   return user;
+ * }, {
+ *   compensationStrategy: 'sequential-reversed'
+ * });
+ * ```
+ */
+declare class CompensationContext {
+    private logger?;
+    private actions;
+    private strategy;
+    /**
+     * Creates a new CompensationContext
+     * @param strategy The execution strategy for compensation actions (default: 'sequential-reversed')
+     * @param logger Optional logger for debug and error messages
+     */
+    constructor(strategy?: CompensationStrategy, logger?: ILogger | undefined);
+    /**
+     * Registers a synchronous / asynchronous compensation action
+     *
+     * Compensation actions are executed in reverse order of registration by default.
+     * Actions should be idempotent when possible, as they may be called multiple times.
+     *
+     * @param action The compensation action to register
+     * @example
+     * ```typescript
+     * const userId = await createUser(data);
+     * compensations.register(() => deleteUser(userId));
+     * ```
+     */
+    register(action: () => void | Promise<void>): void;
+    /**
+     * Conditionally registers a compensation action based on a boolean condition
+     *
+     * The action is only registered if the condition is true.
+     * The condition is evaluated immediately at registration time.
+     *
+     * @param condition A boolean indicating whether the action should be registered
+     * @param action The compensation action to register if condition is true
+     * @example
+     * ```typescript
+     * const resource = await allocateResource();
+     * compensations.registerIf(
+     *   resource.needsCleanup,
+     *   () => releaseResource(resource.id)
+     * );
+     * ```
+     */
+    registerIf(condition: boolean, action: () => void | Promise<void>): void;
+    /**
+     * Lazily registers a compensation action with a condition evaluated at execution time
+     *
+     * The action is always registered, but the condition is evaluated during executeAll().
+     * This is useful when the condition might change between registration and execution.
+     * Supports both synchronous and asynchronous condition functions.
+     * If the condition evaluation throws an error, it's logged and treated as false.
+     *
+     * @param condition A function that returns (or resolves to) true if the action should be executed
+     * @param action The compensation action to execute if condition evaluates to true
+     * @example
+     * ```typescript
+     * let sessionActive = true;
+     * const session = await createSession();
+     *
+     * // Sync condition
+     * compensations.registerIfLazy(
+     *   () => sessionActive,
+     *   () => closeSession(session.id)
+     * );
+     *
+     * // Async condition
+     * compensations.registerIfLazy(
+     *   async () => await checkResourceExists(resource.id),
+     *   async () => await deleteResource(resource.id)
+     * );
+     * ```
+     */
+    registerIfLazy(condition: () => boolean | Promise<boolean>, action: () => void | Promise<void>): void;
+    /**
+     * Gets the number of registered compensation actions
+     * @returns The count of registered actions
+     */
+    getActionCount(): number;
+    /**
+     * Changes the execution strategy for compensation actions
+     * @param strategy The new strategy to use
+     */
+    setStrategy(strategy: CompensationStrategy): void;
+    /**
+     * Gets the current execution strategy
+     * @returns The current strategy
+     */
+    getStrategy(): CompensationStrategy;
+    /**
+     * Executes all registered compensation actions according to the configured strategy
+     *
+     * This method is called automatically by PromiseManager on operation failure.
+     * Errors in individual compensation actions are logged but do not stop execution
+     * of remaining actions (best-effort execution).
+     *
+     * @internal
+     */
+    executeAll(): Promise<void>;
+    /**
+     * Clears all registered compensation actions
+     *
+     * @internal
+     */
+    clear(): void;
 }
 
 declare class OperationRunningError extends Error {
@@ -441,7 +621,9 @@ interface BeforeRunResult<T = unknown> {
 }
 /**
  * PromiseManager provides a way to manage concurrent operations, handling conflicts,
- * timeouts, and clean abortion with potential rollback capabilities.
+ * timeouts, and clean abortion with built-in compensation/rollback capabilities via the Saga pattern.
+ *
+ * @see {@link CompensationContext} for details on the compensation mechanism
  */
 declare class PromiseManager {
     private logger?;
@@ -462,15 +644,37 @@ declare class PromiseManager {
      * Runs an operation with the given name and options
      *
      * @param name Unique identifier for this operation
-     * @param operation Function that performs the operation, receiving an AbortSignal
+     * @param operation Function that performs the operation, receiving an AbortSignal and CompensationContext
      * @param options Configuration options for this operation
      * @returns Promise that resolves with the result of the operation
      * @throws {OperationRunningError} If operation is already running and waitIfRunning is false
      * @throws {ConflictError} If operation conflicts with operations in conflictsWith list
      * @throws {OperationAbortedError} If operation was aborted
      * @throws {OperationTimeoutError} If operation timed out
+     *
+     * @example
+     * ```typescript
+     * await pm.run('updateUser', async (signal, compensations) => {
+     *   const user = await api.createUser(data);
+     *   compensations.register(() => api.deleteUser(user.id));
+     *   return user;
+     * }, {
+     *   compensationStrategy: 'sequential-reversed',
+     *   shouldCompensate: (error) => !(error instanceof ValidationError)
+     * });
+     * ```
      */
-    run<T>(name: string, operation: (signal: AbortSignal) => Promise<T>, options?: {
+    run<T>(name: string, 
+    /**
+     * The main operation function to execute.
+     * It receives an AbortSignal to handle abortion requests
+     * and a CompensationContext to register compensation actions.
+     * @param signal AbortSignal to monitor for abortion requests
+     * @param compensations CompensationContext to register compensation actions
+     */
+    operation: (signal: AbortSignal, compensations: CompensationContext) => Promise<T>, options?: {
+        compensationStrategy?: CompensationStrategy;
+        shouldCompensate?: ShouldCompensateCallback;
         waitIfRunning?: boolean;
         useExistingRunResult?: boolean;
         onWaitForRunsFail?: 'ignore' | 'throw';
@@ -536,20 +740,40 @@ declare class PromiseManager {
     abortAll(reason?: string): number;
 }
 
-interface ErrorCause {
-    code: string;
-    name: string;
-    description: string;
-    component?: string;
+type ERROR_CODE_KEY = string;
+type ERROR_CODE_VALUE = string;
+type BaseErrorCodes = Record<ERROR_CODE_KEY, ERROR_CODE_VALUE>;
+type BaseErrorCause<C extends ERROR_CODE_VALUE = ERROR_CODE_VALUE, N extends string = string, D extends string = string> = {
+    name: N;
+    description: D;
+    code: C;
+};
+type BaseVideoEngagerErrorCodes<C extends BaseErrorCodes = BaseErrorCodes> = Record<C[keyof C], BaseErrorCause<C[keyof C], string, string>>;
+interface ErrorCause<T extends ERROR_CODE_VALUE = ERROR_CODE_VALUE, N extends string = string, D extends string = string, ComponentName extends string = string> {
+    code: T;
+    name: N;
+    description: D;
+    component?: ComponentName;
     retryable?: boolean;
     originalError?: Error;
 }
-declare class VideoEngagerError extends Error {
+declare class VideoEngagerError<T extends BaseErrorCodes = BaseErrorCodes, U extends BaseVideoEngagerErrorCodes<T> = BaseVideoEngagerErrorCodes<T>, ComponentName extends string = string, SelectedCodeValue extends ERROR_CODE_VALUE = ERROR_CODE_VALUE> extends Error {
     static isVeError(error: unknown): error is VideoEngagerError;
-    cause: ErrorCause;
+    /**
+     * A unique identifier for this error instance.
+     * Can be used for tracking and correlation in logs.
+     */
+    idempotencyKey: string;
+    cause: (ExtractErrorDetail<SelectedCodeValue, U, ComponentName>) & {
+        code: SelectedCodeValue;
+    };
     context: Record<string, any>;
-    code: string;
-    constructor(name: string, message: string, cause: ErrorCause, context?: Record<string, any>);
+    code: SelectedCodeValue;
+    version: string;
+    message: `VideoEngagerError: ${this['cause']['name']}`;
+    constructor(name: string, message: string, cause: (ExtractErrorDetail<SelectedCodeValue, U, ComponentName>) & {
+        code: SelectedCodeValue;
+    }, context?: Record<string, any>, version?: string);
     toString(): string;
     toJSON(): Record<string, any>;
 }
@@ -558,6 +782,35 @@ interface ErrorOptions {
     context?: Record<string, any>;
     retryable?: boolean;
     component?: string;
+}
+type ComponentNameStr = string;
+type ExtractErrorDetail<Code extends ERROR_CODE_VALUE, U extends BaseVideoEngagerErrorCodes, ComponentName extends string> = Code extends keyof U ? U[Code] extends BaseErrorCause<Code, infer N, infer D> ? ErrorCause<Code, N, D, ComponentName> : ErrorCause<Code, string, string, ComponentName> : ErrorCause<Code, string, string, ComponentName>;
+interface VEErrorByCode<T extends BaseErrorCodes = BaseErrorCodes, U extends BaseVideoEngagerErrorCodes<T> = BaseVideoEngagerErrorCodes<T>, ComponentName extends string = string, SelectedCodeValue extends ERROR_CODE_VALUE = ERROR_CODE_VALUE> extends VideoEngagerError<T, U, ComponentName, SelectedCodeValue> {
+    code: SelectedCodeValue;
+    cause: ExtractErrorDetail<SelectedCodeValue, U, ComponentName> & {
+        code: SelectedCodeValue;
+    };
+}
+type UnionVeErrorCodes<T extends BaseErrorCodes = BaseErrorCodes> = T[keyof T];
+type AnyVEError<T extends BaseErrorCodes = BaseErrorCodes, U extends BaseVideoEngagerErrorCodes<T> = BaseVideoEngagerErrorCodes<T>, ComponentName extends string = string, VEErrorsCodes extends UnionVeErrorCodes<T> = UnionVeErrorCodes<T>> = ({
+    [C in VEErrorsCodes]: VEErrorByCode<T, U, ComponentName, C>;
+})[VEErrorsCodes];
+interface VideoEngagerCustomErrorConstructor<T extends BaseErrorCodes, U extends BaseVideoEngagerErrorCodes<T>, ComponentName extends ComponentNameStr = ComponentNameStr> {
+    code: T[keyof T];
+    new <Code extends T[keyof T] = T[keyof T]>(code: Code, options?: ErrorOptions): AnyVEError<T, U, ComponentName, Code>;
+    readonly codes: T;
+    readonly errorsDetails: U;
+    /**
+    * used to chek if an error is an instance of VideoEngagerError (Generic)
+    * This catch all type of errors instances created by videoEngager
+    */
+    isVeError(error: unknown): error is AnyVEError<T, U, ComponentName, T[keyof T]>;
+    /**
+    * used to chek if an error is an instance of VideoEngagerCustomError (Specific)
+    */
+    isOwnError<C extends T[keyof T]>(error: unknown): error is AnyVEError<T, U, ComponentName, C>;
+    getErrorDetails<Code extends T[keyof T]>(code: Code): U[Code];
+    isValidCode(code: string): code is T[keyof T];
 }
 
 declare const VEErrorCodes: Readonly<{
@@ -763,359 +1016,210 @@ declare const VEErrorDetails: Readonly<{
         code: "validation|required-field-missing";
     };
 }>;
-declare const VideoEngagerAgentError: {
-    new (code: "agent|already-initialized" | "agent|not-initialized" | "agent|not-authenticated" | "auth|method-not-supported" | "auth|genesys-environment-required" | "auth|generic-api-key-required" | "auth|custom-function-required" | "auth|custom-parameters-missing" | "auth|custom-parameters-invalid-type" | "auth|custom-parameters-empty" | "auth|custom-parameters-invalid-value-type" | "config|domain-required" | "config|domain-invalid-format" | "config|container-id-invalid-type" | "ui-handlers|bad-config" | "ui-handlers|method-required" | "ui-handlers|not-initialized" | "param|customer-id-invalid-type" | "session|already-active" | "session|not-found" | "session|failed-to-start" | "call|not-started" | "call|already-finished" | "widget|iframe-load-failed" | "widget|iframe-not-found" | "widget|container-not-found" | "operation|already-running" | "operation|timeout" | "operation|conflict" | "operation|aborted" | "ve|unhandled-error" | "validation|invalid-argument" | "validation|required-field-missing", options?: ErrorOptions): {
-        version: string;
-        cause: ErrorCause;
-        context: Record<string, any>;
-        code: string;
-        toString(): string;
-        toJSON(): Record<string, any>;
-        name: string;
-        message: string;
-        stack?: string;
-    };
-    readonly codes: Readonly<{
-        AGENT_ALREADY_INITIALIZED: "agent|already-initialized";
-        AGENT_NOT_INITIALIZED: "agent|not-initialized";
-        AGENT_NOT_AUTHENTICATED: "agent|not-authenticated";
-        AUTH_METHOD_NOT_SUPPORTED: "auth|method-not-supported";
-        AUTH_GENESYS_ENVIRONMENT_REQUIRED: "auth|genesys-environment-required";
-        AUTH_GENERIC_API_KEY_REQUIRED: "auth|generic-api-key-required";
-        AUTH_CUSTOM_FUNCTION_REQUIRED: "auth|custom-function-required";
-        AUTH_CUSTOM_PARAMETERS_MISSING: "auth|custom-parameters-missing";
-        AUTH_CUSTOM_PARAMETERS_INVALID_TYPE: "auth|custom-parameters-invalid-type";
-        AUTH_CUSTOM_PARAMETERS_EMPTY: "auth|custom-parameters-empty";
-        AUTH_CUSTOM_PARAMETERS_INVALID_VALUE_TYPE: "auth|custom-parameters-invalid-value-type";
-        CONFIG_DOMAIN_REQUIRED: "config|domain-required";
-        CONFIG_DOMAIN_INVALID_FORMAT: "config|domain-invalid-format";
-        CONFIG_CONTAINER_ID_INVALID_TYPE: "config|container-id-invalid-type";
-        UI_HANDLERS_BAD_CONFIG: "ui-handlers|bad-config";
-        UI_HANDLERS_METHOD_REQUIRED: "ui-handlers|method-required";
-        UI_HANDLERS_NOT_INITIALIZED: "ui-handlers|not-initialized";
-        PARAM_CUSTOMER_ID_INVALID_TYPE: "param|customer-id-invalid-type";
-        SESSION_ALREADY_ACTIVE: "session|already-active";
-        SESSION_NOT_FOUND: "session|not-found";
-        SESSION_FAILED_TO_START: "session|failed-to-start";
-        CALL_NOT_STARTED: "call|not-started";
-        CALL_ALREADY_FINISHED: "call|already-finished";
-        WIDGET_IFRAME_LOAD_FAILED: "widget|iframe-load-failed";
-        WIDGET_IFRAME_NOT_FOUND: "widget|iframe-not-found";
-        WIDGET_CONTAINER_NOT_FOUND: "widget|container-not-found";
-        OPERATION_ALREADY_RUNNING: "operation|already-running";
-        OPERATION_TIMEOUT: "operation|timeout";
-        OPERATION_CONFLICT: "operation|conflict";
-        OPERATION_ABORTED: "operation|aborted";
-        VE_UNHANDLED_ERROR: "ve|unhandled-error";
-        INVALID_ARGUMENT: "validation|invalid-argument";
-        REQUIRED_FIELD_MISSING: "validation|required-field-missing";
-    }>;
-    readonly errorsDetails: Readonly<{
-        "agent|already-initialized": {
-            name: string;
-            description: string;
-            code: "agent|already-initialized";
-        };
-        "agent|not-initialized": {
-            name: string;
-            description: string;
-            code: "agent|not-initialized";
-        };
-        "agent|not-authenticated": {
-            name: string;
-            description: string;
-            code: "agent|not-authenticated";
-        };
-        "auth|method-not-supported": {
-            name: string;
-            description: string;
-            code: "auth|method-not-supported";
-        };
-        "auth|genesys-environment-required": {
-            name: string;
-            description: string;
-            code: "auth|genesys-environment-required";
-        };
-        "auth|generic-api-key-required": {
-            name: string;
-            description: string;
-            code: "auth|generic-api-key-required";
-        };
-        "auth|custom-function-required": {
-            name: string;
-            description: string;
-            code: "auth|custom-function-required";
-        };
-        "auth|custom-parameters-missing": {
-            name: string;
-            description: string;
-            code: "auth|custom-parameters-missing";
-        };
-        "auth|custom-parameters-invalid-type": {
-            name: string;
-            description: string;
-            code: "auth|custom-parameters-invalid-type";
-        };
-        "auth|custom-parameters-empty": {
-            name: string;
-            description: string;
-            code: "auth|custom-parameters-empty";
-        };
-        "auth|custom-parameters-invalid-value-type": {
-            name: string;
-            description: string;
-            code: "auth|custom-parameters-invalid-value-type";
-        };
-        "config|domain-required": {
-            name: string;
-            description: string;
-            code: "config|domain-required";
-        };
-        "config|domain-invalid-format": {
-            name: string;
-            description: string;
-            code: "config|domain-invalid-format";
-        };
-        "config|container-id-invalid-type": {
-            name: string;
-            description: string;
-            code: "config|container-id-invalid-type";
-        };
-        "ui-handlers|bad-config": {
-            name: string;
-            description: string;
-            code: "ui-handlers|bad-config";
-        };
-        "ui-handlers|method-required": {
-            name: string;
-            description: string;
-            code: "ui-handlers|method-required";
-        };
-        "ui-handlers|not-initialized": {
-            name: string;
-            description: string;
-            code: "ui-handlers|not-initialized";
-        };
-        "param|customer-id-invalid-type": {
-            name: string;
-            description: string;
-            code: "param|customer-id-invalid-type";
-        };
-        "session|already-active": {
-            name: string;
-            description: string;
-            code: "session|already-active";
-        };
-        "session|not-found": {
-            name: string;
-            description: string;
-            code: "session|not-found";
-        };
-        "session|failed-to-start": {
-            name: string;
-            description: string;
-            code: "session|failed-to-start";
-        };
-        "call|not-started": {
-            name: string;
-            description: string;
-            code: "call|not-started";
-        };
-        "call|already-finished": {
-            name: string;
-            description: string;
-            code: "call|already-finished";
-        };
-        "widget|iframe-load-failed": {
-            name: string;
-            description: string;
-            code: "widget|iframe-load-failed";
-        };
-        "widget|iframe-not-found": {
-            name: string;
-            description: string;
-            code: "widget|iframe-not-found";
-        };
-        "widget|container-not-found": {
-            name: string;
-            description: string;
-            code: "widget|container-not-found";
-        };
-        "operation|already-running": {
-            name: string;
-            description: string;
-            code: "operation|already-running";
-        };
-        "operation|timeout": {
-            name: string;
-            description: string;
-            code: "operation|timeout";
-        };
-        "operation|conflict": {
-            name: string;
-            description: string;
-            code: "operation|conflict";
-        };
-        "operation|aborted": {
-            name: string;
-            description: string;
-            code: "operation|aborted";
-        };
-        "ve|unhandled-error": {
-            name: string;
-            description: string;
-            code: "ve|unhandled-error";
-        };
-        "validation|invalid-argument": {
-            name: string;
-            description: string;
-            code: "validation|invalid-argument";
-        };
-        "validation|required-field-missing": {
-            name: string;
-            description: string;
-            code: "validation|required-field-missing";
-        };
-    }>;
-    isValidCode(code: string): code is "agent|already-initialized" | "agent|not-initialized" | "agent|not-authenticated" | "auth|method-not-supported" | "auth|genesys-environment-required" | "auth|generic-api-key-required" | "auth|custom-function-required" | "auth|custom-parameters-missing" | "auth|custom-parameters-invalid-type" | "auth|custom-parameters-empty" | "auth|custom-parameters-invalid-value-type" | "config|domain-required" | "config|domain-invalid-format" | "config|container-id-invalid-type" | "ui-handlers|bad-config" | "ui-handlers|method-required" | "ui-handlers|not-initialized" | "param|customer-id-invalid-type" | "session|already-active" | "session|not-found" | "session|failed-to-start" | "call|not-started" | "call|already-finished" | "widget|iframe-load-failed" | "widget|iframe-not-found" | "widget|container-not-found" | "operation|already-running" | "operation|timeout" | "operation|conflict" | "operation|aborted" | "ve|unhandled-error" | "validation|invalid-argument" | "validation|required-field-missing";
-    getErrorDetails(code: "agent|already-initialized" | "agent|not-initialized" | "agent|not-authenticated" | "auth|method-not-supported" | "auth|genesys-environment-required" | "auth|generic-api-key-required" | "auth|custom-function-required" | "auth|custom-parameters-missing" | "auth|custom-parameters-invalid-type" | "auth|custom-parameters-empty" | "auth|custom-parameters-invalid-value-type" | "config|domain-required" | "config|domain-invalid-format" | "config|container-id-invalid-type" | "ui-handlers|bad-config" | "ui-handlers|method-required" | "ui-handlers|not-initialized" | "param|customer-id-invalid-type" | "session|already-active" | "session|not-found" | "session|failed-to-start" | "call|not-started" | "call|already-finished" | "widget|iframe-load-failed" | "widget|iframe-not-found" | "widget|container-not-found" | "operation|already-running" | "operation|timeout" | "operation|conflict" | "operation|aborted" | "ve|unhandled-error" | "validation|invalid-argument" | "validation|required-field-missing"): {
+declare const VideoEngagerAgentError: VideoEngagerCustomErrorConstructor<Readonly<{
+    AGENT_ALREADY_INITIALIZED: "agent|already-initialized";
+    AGENT_NOT_INITIALIZED: "agent|not-initialized";
+    AGENT_NOT_AUTHENTICATED: "agent|not-authenticated";
+    AUTH_METHOD_NOT_SUPPORTED: "auth|method-not-supported";
+    AUTH_GENESYS_ENVIRONMENT_REQUIRED: "auth|genesys-environment-required";
+    AUTH_GENERIC_API_KEY_REQUIRED: "auth|generic-api-key-required";
+    AUTH_CUSTOM_FUNCTION_REQUIRED: "auth|custom-function-required";
+    AUTH_CUSTOM_PARAMETERS_MISSING: "auth|custom-parameters-missing";
+    AUTH_CUSTOM_PARAMETERS_INVALID_TYPE: "auth|custom-parameters-invalid-type";
+    AUTH_CUSTOM_PARAMETERS_EMPTY: "auth|custom-parameters-empty";
+    AUTH_CUSTOM_PARAMETERS_INVALID_VALUE_TYPE: "auth|custom-parameters-invalid-value-type";
+    CONFIG_DOMAIN_REQUIRED: "config|domain-required";
+    CONFIG_DOMAIN_INVALID_FORMAT: "config|domain-invalid-format";
+    CONFIG_CONTAINER_ID_INVALID_TYPE: "config|container-id-invalid-type";
+    UI_HANDLERS_BAD_CONFIG: "ui-handlers|bad-config";
+    UI_HANDLERS_METHOD_REQUIRED: "ui-handlers|method-required";
+    UI_HANDLERS_NOT_INITIALIZED: "ui-handlers|not-initialized";
+    PARAM_CUSTOMER_ID_INVALID_TYPE: "param|customer-id-invalid-type";
+    SESSION_ALREADY_ACTIVE: "session|already-active";
+    SESSION_NOT_FOUND: "session|not-found";
+    SESSION_FAILED_TO_START: "session|failed-to-start";
+    CALL_NOT_STARTED: "call|not-started";
+    CALL_ALREADY_FINISHED: "call|already-finished";
+    WIDGET_IFRAME_LOAD_FAILED: "widget|iframe-load-failed";
+    WIDGET_IFRAME_NOT_FOUND: "widget|iframe-not-found";
+    WIDGET_CONTAINER_NOT_FOUND: "widget|container-not-found";
+    OPERATION_ALREADY_RUNNING: "operation|already-running";
+    OPERATION_TIMEOUT: "operation|timeout";
+    OPERATION_CONFLICT: "operation|conflict";
+    OPERATION_ABORTED: "operation|aborted";
+    VE_UNHANDLED_ERROR: "ve|unhandled-error";
+    INVALID_ARGUMENT: "validation|invalid-argument";
+    REQUIRED_FIELD_MISSING: "validation|required-field-missing";
+}>, Readonly<{
+    "agent|already-initialized": {
         name: string;
         description: string;
         code: "agent|already-initialized";
-    } | {
+    };
+    "agent|not-initialized": {
         name: string;
         description: string;
         code: "agent|not-initialized";
-    } | {
+    };
+    "agent|not-authenticated": {
         name: string;
         description: string;
         code: "agent|not-authenticated";
-    } | {
+    };
+    "auth|method-not-supported": {
         name: string;
         description: string;
         code: "auth|method-not-supported";
-    } | {
+    };
+    "auth|genesys-environment-required": {
         name: string;
         description: string;
         code: "auth|genesys-environment-required";
-    } | {
+    };
+    "auth|generic-api-key-required": {
         name: string;
         description: string;
         code: "auth|generic-api-key-required";
-    } | {
+    };
+    "auth|custom-function-required": {
         name: string;
         description: string;
         code: "auth|custom-function-required";
-    } | {
+    };
+    "auth|custom-parameters-missing": {
         name: string;
         description: string;
         code: "auth|custom-parameters-missing";
-    } | {
+    };
+    "auth|custom-parameters-invalid-type": {
         name: string;
         description: string;
         code: "auth|custom-parameters-invalid-type";
-    } | {
+    };
+    "auth|custom-parameters-empty": {
         name: string;
         description: string;
         code: "auth|custom-parameters-empty";
-    } | {
+    };
+    "auth|custom-parameters-invalid-value-type": {
         name: string;
         description: string;
         code: "auth|custom-parameters-invalid-value-type";
-    } | {
+    };
+    "config|domain-required": {
         name: string;
         description: string;
         code: "config|domain-required";
-    } | {
+    };
+    "config|domain-invalid-format": {
         name: string;
         description: string;
         code: "config|domain-invalid-format";
-    } | {
+    };
+    "config|container-id-invalid-type": {
         name: string;
         description: string;
         code: "config|container-id-invalid-type";
-    } | {
+    };
+    "ui-handlers|bad-config": {
         name: string;
         description: string;
         code: "ui-handlers|bad-config";
-    } | {
+    };
+    "ui-handlers|method-required": {
         name: string;
         description: string;
         code: "ui-handlers|method-required";
-    } | {
+    };
+    "ui-handlers|not-initialized": {
         name: string;
         description: string;
         code: "ui-handlers|not-initialized";
-    } | {
+    };
+    "param|customer-id-invalid-type": {
         name: string;
         description: string;
         code: "param|customer-id-invalid-type";
-    } | {
+    };
+    "session|already-active": {
         name: string;
         description: string;
         code: "session|already-active";
-    } | {
+    };
+    "session|not-found": {
         name: string;
         description: string;
         code: "session|not-found";
-    } | {
+    };
+    "session|failed-to-start": {
         name: string;
         description: string;
         code: "session|failed-to-start";
-    } | {
+    };
+    "call|not-started": {
         name: string;
         description: string;
         code: "call|not-started";
-    } | {
+    };
+    "call|already-finished": {
         name: string;
         description: string;
         code: "call|already-finished";
-    } | {
+    };
+    "widget|iframe-load-failed": {
         name: string;
         description: string;
         code: "widget|iframe-load-failed";
-    } | {
+    };
+    "widget|iframe-not-found": {
         name: string;
         description: string;
         code: "widget|iframe-not-found";
-    } | {
+    };
+    "widget|container-not-found": {
         name: string;
         description: string;
         code: "widget|container-not-found";
-    } | {
+    };
+    "operation|already-running": {
         name: string;
         description: string;
         code: "operation|already-running";
-    } | {
+    };
+    "operation|timeout": {
         name: string;
         description: string;
         code: "operation|timeout";
-    } | {
+    };
+    "operation|conflict": {
         name: string;
         description: string;
         code: "operation|conflict";
-    } | {
+    };
+    "operation|aborted": {
         name: string;
         description: string;
         code: "operation|aborted";
-    } | {
+    };
+    "ve|unhandled-error": {
         name: string;
         description: string;
         code: "ve|unhandled-error";
-    } | {
+    };
+    "validation|invalid-argument": {
         name: string;
         description: string;
         code: "validation|invalid-argument";
-    } | {
+    };
+    "validation|required-field-missing": {
         name: string;
         description: string;
         code: "validation|required-field-missing";
     };
-    isVeError(error: unknown): error is VideoEngagerError;
-};
+}>, "VideoEngagerAgent">;
 type VideoEngagerAgentError = InstanceType<typeof VideoEngagerAgentError>;
 
-declare const VERSION: "1.0.0";
+declare const VERSION = "4.0.1";
 
 /**
  * VideoEngager Agent - Main class for integrating VideoEngager widget into applications
@@ -1145,7 +1249,7 @@ declare class VideoEngagerAgent<T extends AuthProviderTypes = 'generic'> {
     protected authParameters?: Record<string, any>;
     protected promiseManager: PromiseManager;
     protected PromiseManager: typeof PromiseManager;
-    static readonly VERSION: "1.0.0";
+    static readonly VERSION = "4.0.1";
     protected configs: VeAgentOptions<T>;
     private static _instance;
     protected _isInitialized: boolean;
