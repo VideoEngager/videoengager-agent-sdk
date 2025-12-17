@@ -21,16 +21,9 @@ jobs:
         with:
           fetch-depth: 0      # provenance links back to this commit
 
-      - name: Setup Node.js (npm CLI)
+      - name: Setup and publish
         uses: actions/setup-node@v4
         with:
           node-version: 20
           registry-url: https://registry.npmjs.org
-#  Authentication Happen automatically with trusted publisher
-      # - name: Authenticate to npm
-        # run: npm config set //registry.npmjs.org/:_authToken=${{ secrets.PUBLISH_TOKEN }}
-
-      - name: Publish with provenance
-        # env:
-          # NODE_AUTH_TOKEN: ${{ secrets.PUBLISH_TOKEN }}
-        run: npm publish --provenance --access public
+      - run: npm publish --provenance --access public
