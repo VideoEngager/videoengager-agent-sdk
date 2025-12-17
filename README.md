@@ -193,6 +193,192 @@ await destroy(); // Complete cleanup
 // After destroy, must call init() again to use the SDK
 ```
 
+#### `acceptCall(visitorId)` (Standalone Mode Only)
+
+⚠️ **Beta** - Requires `standaloneMode: true` with `authMethod: 'generic' | 'token'`
+
+Accepts an incoming call notification.
+
+```typescript
+import { acceptCall, on } from 'videoengager-agent-sdk';
+
+on('incomingCall', async (notification) => {
+  await acceptCall(notification.visitorId);
+});
+```
+
+**Parameters:**
+- `visitorId`: The visitor ID from the incoming call notification
+
+**Throws:**
+- `AGENT_NOT_IN_STANDALONE_MODE`: When not in standalone mode
+- `SESSION_ALREADY_ACTIVE`: When another call is active
+
+#### `rejectCall(visitorId)` (Standalone Mode Only)
+
+⚠️ **Beta** - Requires `standaloneMode: true` with `authMethod: 'generic' | 'token'`
+
+Rejects an incoming call notification.
+
+```typescript
+import { rejectCall, on } from 'videoengager-agent-sdk';
+
+on('incomingCall', async (notification) => {
+  await rejectCall(notification.visitorId);
+});
+```
+
+**Parameters:**
+- `visitorId`: The visitor ID from the incoming call notification
+
+#### `getDisplayName()` (Standalone Mode Only)
+
+⚠️ **Beta** - Requires `standaloneMode: true` with `authMethod: 'generic' | 'token'`
+
+Gets the authenticated agent's display name.
+
+```typescript
+import { getDisplayName } from 'videoengager-agent-sdk';
+
+const name = getDisplayName();
+console.log(`Logged in as: ${name}`);
+```
+
+**Returns:** Agent's display name (typically first name + last name)
+
+#### `agentSettings()` (Standalone Mode Only)
+
+⚠️ **Beta** - Requires `standaloneMode: true` with `authMethod: 'generic' | 'token'`
+
+Gets the authenticated agent's settings and brokerage data.
+
+```typescript
+import { agentSettings } from 'videoengager-agent-sdk';
+
+const settings = agentSettings();
+console.log('Agent configuration:', settings);
+```
+
+**Returns:** Agent's brokerage data and settings
+
+#### `getReceivedCalls()` (Standalone Mode Only)
+
+⚠️ **Beta** - Requires `standaloneMode: true` with `authMethod: 'generic' | 'token'`
+
+Gets the list of currently received incoming calls.
+
+```typescript
+import { getReceivedCalls, on } from 'videoengager-agent-sdk';
+
+// Get current received calls
+const calls = getReceivedCalls();
+console.log(`${calls.length} calls waiting`);
+
+// Listen for changes
+on('incomingCall', () => {
+  const updated = getReceivedCalls();
+  console.log('Call list updated:', updated);
+});
+
+on('callRemoved', (visitorId) => {
+  console.log('Call removed:', visitorId);
+});
+```
+
+**Returns:** Array of received call notifications
+
+**Related Events:** `incomingCall`, `callRemoved`
+
+#### `switchQueue()` (Standalone Mode Only)
+
+⚠️ **Beta** - Requires `standaloneMode: true` with `authMethod: 'generic' | 'token'`
+
+Toggles the agent's queue status. When on queue, the agent will start receiving incoming call notifications.
+
+```typescript
+import { switchQueue, isOnQueue, on } from 'videoengager-agent-sdk';
+
+// Toggle queue status
+await switchQueue();
+console.log(`Queue is now ${isOnQueue() ? 'ON' : 'OFF'}`);
+
+// Listen for queue status changes
+on('inCallsQueue', (status) => {
+  console.log(`Queue status changed: ${status ? 'ON' : 'OFF'}`);
+  if (status) {
+    console.log('Now receiving calls');
+  }
+});
+```
+
+**Returns:** Promise that resolves when queue status is toggled
+
+**Related Event:** `inCallsQueue`
+
+#### `isOnQueue()` (Standalone Mode Only)
+
+⚠️ **Beta** - Requires `standaloneMode: true` with `authMethod: 'generic' | 'token'`
+
+Checks if the agent is currently on the call queue and receiving incoming calls.
+
+```typescript
+import { isOnQueue, switchQueue } from 'videoengager-agent-sdk';
+
+if (isOnQueue()) {
+  console.log('Agent is receiving calls');
+} else {
+  console.log('Agent is not on queue');
+  await switchQueue(); // Turn on queue
+}
+```
+
+**Returns:** `true` if agent is on queue, `false` otherwise
+
+**Related Event:** `inCallsQueue`
+
+#### `isIframeOpened()`
+
+⚠️ **Beta** - Checks if the VideoEngager iframe is currently open.
+
+```typescript
+import { isIframeOpened } from 'videoengager-agent-sdk';
+
+if (isIframeOpened()) {
+  console.log('Widget is currently visible');
+}
+```
+
+**Returns:** `true` if iframe is open, `false` otherwise
+
+#### `setUiHandler(handlers)`
+
+Sets custom UI handlers for iframe management.
+
+```typescript
+import { setUiHandler } from 'videoengager-agent-sdk';
+
+setUiHandler({
+  openIframe: async (src, config) => {
+    // Custom iframe open logic
+    const iframe = document.createElement('iframe');
+    iframe.src = src;
+    document.body.appendChild(iframe);
+    return iframe;
+  },
+  closeIframe: async (config) => {
+    // Custom iframe close logic
+    const iframe = document.querySelector('iframe');
+    iframe?.remove();
+  },
+  getIframe: async (config) => {
+    return document.querySelector('iframe');
+  }
+});
+```
+
+**Parameters:**
+- `handlers`: Custom UI handler object with `openIframe`, `closeIframe`, and `getIframe` methods
+
 ## 🔐 Authentication
 
 The SDK supports multiple authentication methods to integrate with various platforms:
@@ -218,6 +404,22 @@ await init({
 
 **Optional:**
 - `organizationId`: Organization identifier
+
+### Token Authentication
+
+Use this for token-based authentication.
+
+```typescript
+await init({
+  authMethod: 'token',
+  token: 'your-auth-token',
+  domain: 'your-domain.videome.leadsecure.com'
+});
+```
+
+**Required:**
+- `token`: Your authentication token
+- `domain`: Your VideoEngager domain
 
 ### Genesys Authentication
 
@@ -288,6 +490,262 @@ await init({
 The custom authentication function must return an object with either:
 - `pak`, `agentEmail`, and `environment` properties, OR
 - `token` property
+
+## 🎯 Standalone Mode (Beta)
+
+**Standalone Mode** enables advanced agent-initiated features including incoming call notifications, call accept/reject capabilities, and agent presence management. This mode is ideal for building custom agent dashboards and call center applications.
+
+### Requirements
+
+⚠️ **Important**: Standalone Mode is only available with specific authentication methods:
+
+✅ **Supported:**
+- `authMethod: 'generic'`
+- `authMethod: 'token'`
+
+❌ **Not Supported:**
+- `authMethod: 'genesys'`
+- `authMethod: 'custom'`
+
+### Configuration
+
+#### Generic Authentication with Standalone Mode
+
+```typescript
+import { init, on, acceptCall, rejectCall } from 'videoengager-agent-sdk';
+
+await init({
+  authMethod: 'generic',
+  apiKey: 'your-api-key',
+  domain: 'your-domain.videome.leadsecure.com',
+  agentEmail: 'agent@yourcompany.com',
+  organizationId: 'your-org-id', // Optional
+  
+  // Standalone Mode Configuration
+  standaloneMode: true,
+  externalId: 'agent-123',        // Required for standalone
+  firstName: 'John',              // Optional
+  lastName: 'Doe',                // Optional
+  contactEmail: 'john@example.com' // Optional
+});
+```
+
+**Required for Standalone:**
+- `standaloneMode: true`
+- `externalId`: Unique identifier for the VideoEngager organization
+
+**Optional:**
+- `firstName`: Agent's first name
+- `lastName`: Agent's last name
+- `contactEmail`: Agent's contact email
+
+#### Token Authentication with Standalone Mode
+
+```typescript
+await init({
+  authMethod: 'token',
+  token: 'your-auth-token',
+  domain: 'your-domain.videome.leadsecure.com',
+  standaloneMode: true
+});
+```
+
+### Standalone Features
+
+#### Accept Incoming Calls
+
+```typescript
+import { on, acceptCall } from 'videoengager-agent-sdk';
+
+// Listen for incoming call notifications
+on('incomingCall', async (notification) => {
+  console.log('Incoming call from:', notification.displayName);
+  console.log('Visitor ID:', notification.caller.id);
+  console.log('Context:', notification.context);
+  // Accept the call
+  await acceptCall(notification.caller.id);
+});
+```
+
+#### Reject Incoming Calls
+
+```typescript
+import { on, rejectCall } from 'videoengager-agent-sdk';
+
+on('incomingCall', async (notification) => {
+  if (shouldRejectCall(notification)) {
+    await rejectCall(notification.visitorId);
+  }
+});
+```
+
+#### Get Agent Information
+
+```typescript
+import { getDisplayName, agentSettings } from 'videoengager-agent-sdk';
+
+// Get agent's display name
+const displayName = getDisplayName();
+console.log(`Logged in as: ${displayName}`);
+
+// Get agent's settings and configuration
+const settings = agentSettings();
+console.log('Agent settings:', settings);
+```
+
+#### Check Call State
+
+```typescript
+import { isIframeOpened, on } from 'videoengager-agent-sdk';
+
+// Check if widget is currently open
+if (isIframeOpened()) {
+  console.log('Widget is currently visible');
+}
+
+// Listen for widget state changes
+on('iframeStateChanged', (isOpen) => {
+  console.log(`Widget is now ${isOpen ? 'open' : 'closed'}`);
+});
+```
+
+### Standalone Events
+
+In addition to standard events, Standalone Mode provides these additional events:
+
+#### `incomingCall`
+
+Emitted when a new call notification is received.
+
+```typescript
+on('incomingCall', (notification) => {
+  console.log('New incoming call:', notification);
+  // notification.caller.id - Use this to accept/reject
+  // notification.displayName - Caller's name
+  // notification.context - Additional call data
+});
+```
+
+#### `iframeStateChanged`
+
+Emitted when the widget iframe opens or closes.
+
+```typescript
+on('iframeStateChanged', (isOpen) => {
+  if (isOpen) {
+    console.log('Widget opened');
+  } else {
+    console.log('Widget closed');
+  }
+});
+```
+
+### Complete Standalone Example
+
+```typescript
+import { 
+  init, 
+  on, 
+  acceptCall, 
+  rejectCall, 
+  getDisplayName,
+  isIframeOpened,
+  switchQueue,
+  isOnQueue,
+  getReceivedCalls
+} from 'videoengager-agent-sdk';
+
+// Initialize in standalone mode
+await init({
+  authMethod: 'generic',
+  apiKey: 'your-api-key',
+  domain: 'your-domain.videome.leadsecure.com',
+  agentEmail: 'agent@yourcompany.com',
+  standaloneMode: true,
+  externalId: 'agent-123',
+  firstName: 'John',
+  lastName: 'Doe'
+});
+
+// Display agent info
+console.log(`Agent: ${getDisplayName()}`);
+
+// Start receiving calls by joining the queue
+await switchQueue();
+console.log('Agent is now on queue');
+
+// Monitor queue status
+on('inCallsQueue', (status) => {
+  console.log(`Queue status: ${status ? 'ON' : 'OFF'}`);
+});
+
+// Monitor call removals
+on('callRemoved', (visitorId) => {
+  console.log(`Call ${visitorId} was removed`);
+  const remaining = getReceivedCalls();
+  console.log(`${remaining.length} calls remaining in queue`);
+});
+
+// Handle incoming calls
+on('incomingCall', async (notification) => {
+  console.log(`📞 Incoming call from ${notification.displayName}`);
+
+  // Check if already in a call
+  if (isIframeOpened()) {
+    console.log('Already in a call, rejecting...');
+    await rejectCall(notification.visitorId);
+    return;
+  }
+  
+  // Accept the call
+  try {
+    await acceptCall(notification.visitorId);
+    console.log('✅ Call accepted');
+  } catch (error) {
+    console.error('❌ Failed to accept call:', error);
+  }
+});
+
+// Track session lifecycle
+on('sessionStarted', (callState) => {
+  console.log('📹 Video session started');
+});
+
+on('sessionEnded', (callState) => {
+  console.log('👋 Video session ended');
+});
+
+// Track widget state
+on('iframeStateChanged', (isOpen) => {
+  console.log(`Widget is ${isOpen ? 'visible' : 'hidden'}`);
+});
+```
+
+### Standalone Mode Error Handling
+
+```typescript
+import { acceptCall, VideoEngagerAgentError } from 'videoengager-agent-sdk';
+
+try {
+  await acceptCall(visitorId);
+} catch (error) {
+  if (VideoEngagerAgentError.isVeError(error)) {
+    switch (error.code) {
+      case 'standalone|agent-not-in-standalone-mode':
+        console.error('Standalone mode not enabled');
+        break;
+      case 'session|already-active':
+        console.error('Another call is already active');
+        break;
+      case 'standalone|session-accepted-by-another-agent':
+        console.error('Call was accepted by another agent');
+        break;
+      default:
+        console.error('Error:', error.message);
+    }
+  }
+}
+```
 
 ## 📡 Events
 
@@ -381,6 +839,60 @@ Emitted when the SDK is being cleaned up.
 on('cleanup', () => {
   console.log('SDK is being cleaned up');
   // Perform any necessary cleanup in your application
+});
+```
+
+#### `incomingCall` (Standalone Mode Only)
+
+⚠️ **Beta** - Only available in standalone mode
+
+Emitted when a new incoming call notification is received.
+
+```typescript
+on('incomingCall', (notification) => {
+  console.log('Incoming call from:', notification.displayName);
+  console.log('Visitor ID:', notification.caller.id);
+  console.log('Attributes:', notification.context);
+});
+```
+
+#### `iframeStateChanged`
+
+⚠️ **Beta** - Emitted when the widget iframe opens or closes.
+
+```typescript
+on('iframeStateChanged', (isOpen) => {
+  console.log(`Widget is ${isOpen ? 'open' : 'closed'}`);
+});
+```
+
+#### `inCallsQueue` (Standalone Mode Only)
+
+⚠️ **Beta** - Only available in standalone mode
+
+Emitted when the agent's queue status changes.
+
+```typescript
+on('inCallsQueue', (isOnQueue) => {
+  if (isOnQueue) {
+    console.log('Agent is now on queue - will receive incoming calls');
+  } else {
+    console.log('Agent is now off queue - will not receive calls');
+  }
+});
+```
+
+#### `callRemoved` (Standalone Mode Only)
+
+⚠️ **Beta** - Only available in standalone mode
+
+Emitted when an incoming call is removed from the queue (e.g., visitor hung up, call accepted by another agent).
+
+```typescript
+on('callRemoved', (visitorId) => {
+  console.log('Call removed from queue:', visitorId);
+  const remainingCalls = getReceivedCalls();
+  console.log(`${remainingCalls.length} calls remaining`);
 });
 ```
 
@@ -608,11 +1120,15 @@ try {
 | `AUTH_METHOD_NOT_SUPPORTED` | Authentication | The specified authentication method is not supported. | ❌ No | ✅ Yes | Error |
 | `AUTH_GENESYS_ENVIRONMENT_REQUIRED` | Authentication | Genesys environment is required for Genesys authentication. | ❌ No | ✅ Yes | Error |
 | `AUTH_GENERIC_API_KEY_REQUIRED` | Authentication | API key is required for generic authentication. | ❌ No | ✅ Yes | Error |
+| `AUTH_GENERIC_AGENT_EMAIL_REQUIRED` | Authentication | Agent email is required for generic authentication. | ❌ No | ✅ Yes | Error |
+| `AUTH_GENERIC_EXTERNAL_ID_REQUIRED` | Authentication | External ID is required for generic authentication in standalone mode. | ❌ No | ✅ Yes | Error |
+| `AUTH_TOKEN_REQUIRED` | Authentication | Token is required for token-based authentication. | ❌ No | ✅ Yes | Error |
 | `AUTH_CUSTOM_FUNCTION_REQUIRED` | Authentication | Custom authentication function is required for custom authentication. | ❌ No | ✅ Yes | Error |
 | `AUTH_CUSTOM_PARAMETERS_MISSING` | Authentication | Authentication parameters are missing in the response from custom authentication function. | ✅ Yes | ✅ Yes | Error |
 | `AUTH_CUSTOM_PARAMETERS_INVALID_TYPE` | Authentication | Authentication parameters should be an object. | ❌ No | ✅ Yes | Error |
 | `AUTH_CUSTOM_PARAMETERS_EMPTY` | Authentication | Authentication parameters are empty. | ✅ Yes | ✅ Yes | Error |
 | `AUTH_CUSTOM_PARAMETERS_INVALID_VALUE_TYPE` | Authentication | Invalid type for authentication parameter. Only string, number, and boolean are supported. | ❌ No | ✅ Yes | Error |
+| `AUTH_TOKEN_REQUIRED` | Authentication | Token is required for token-based authentication. | ❌ No | ✅ Yes | Error |
 | `CONFIG_DOMAIN_REQUIRED` | Configuration | Domain must be a non-empty string. | ❌ No | ✅ Yes | Error |
 | `CONFIG_DOMAIN_INVALID_FORMAT` | Configuration | Invalid domain format. Please provide a valid domain. | ❌ No | ✅ Yes | Error |
 | `CONFIG_CONTAINER_ID_INVALID_TYPE` | Configuration | Container ID must be a string. | ❌ No | ✅ Yes | Error |
@@ -629,6 +1145,10 @@ try {
 | `WIDGET_IFRAME_NOT_FOUND` | Widget | VideoEngager widget iframe not found in the DOM. | ✅ Yes | ✅ Yes | Error |
 | `WIDGET_CONTAINER_NOT_FOUND` | Widget | VideoEngager widget container not found in the DOM. | ✅ Yes | ✅ Yes | Error |
 | `OPERATION_ALREADY_RUNNING` | Operation | Operation already in progress. | ✅ Yes | ✅ Yes | Warning |
+| `AGENT_NOT_IN_STANDALONE_MODE` | Standalone | The requested operation is only available in standalone mode. | ❌ No | ✅ Yes | Error |
+| `VISITOR_HAS_LEFT_SESSION` | Standalone | The visitor has left the session. | ❌ No | ✅ Yes | Warning |
+| `SESSION_ACCEPTED_BY_ANOTHER_AGENT` | Standalone | The session was accepted by another agent. | ❌ No | ✅ Yes | Warning |
+| `SESSION_ACCEPTED_BY_SELF_ON_ANOTHER_DEVICE` | Standalone | The session was accepted by the same agent on another device or tab. | ❌ No | ✅ Yes | Warning |
 | `OPERATION_TIMEOUT` | Operation | Operation timed out before completion. | ✅ Yes | ❌ No | Error |
 | `OPERATION_CONFLICT` | Operation | Cannot run operation due to conflicting operations already running. | ✅ Yes | ✅ Yes | Warning |
 | `OPERATION_ABORTED` | Operation | Operation was aborted before completion. | ❌ No | ✅ Yes | Warning |
