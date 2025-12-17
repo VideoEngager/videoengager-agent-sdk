@@ -26,11 +26,11 @@ jobs:
         with:
           node-version: 20
           registry-url: https://registry.npmjs.org
-
-      - name: Authenticate to npm
-        run: npm config set //registry.npmjs.org/:_authToken=${{ secrets.PUBLISH_TOKEN }}
+#  Authentication Happen automatically with trusted publisher
+      # - name: Authenticate to npm
+        # run: npm config set //registry.npmjs.org/:_authToken=${{ secrets.PUBLISH_TOKEN }}
 
       - name: Publish with provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.PUBLISH_TOKEN }}
+        # env:
+          # NODE_AUTH_TOKEN: ${{ secrets.PUBLISH_TOKEN }}
         run: npm publish --provenance --access public
