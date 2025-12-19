@@ -1909,6 +1909,12 @@ declare class PushClientManager {
      * ```
      */
     get state(): PushClientStateObj;
+    protected _state: PushClientStateObj;
+    /**
+    * @internal Maximum number of session IDs to cache for the current user.
+    */
+    protected MAX_CACHED_SESSION_IDS: number;
+    protected _destroyed: boolean;
     /**
      * Indicates whether this manager instance has been destroyed.
      * Once destroyed, the manager cannot be used and a new one must be created.
@@ -1917,6 +1923,12 @@ declare class PushClientManager {
      * @returns True if destroyed, false otherwise
      */
     get destroyed(): boolean;
+    /** @internal */
+    protected _logger: ContextTreeLogger;
+    /** @internal */
+    protected _client: PushClient;
+    /** @internal */
+    protected subscribedInstances: Set<PushSubscribedInstance>;
     private constructor();
     getTimeTableData(): Promise<string>;
     leaveCallsQueue(): Promise<void>;
@@ -1992,6 +2004,35 @@ declare class PushClientManager {
      */
     waitForConnected(ms?: number): Promise<boolean | void>;
     /**
+     * Updates a state property and emits a change event if the value has changed.
+     *
+     * @internal
+     * @param key - The state property key to update
+     * @param value - The new value for the property
+     */
+    protected setState<K extends PushClientStateKeys>(key: K, value: PushClientStateObj[K]): void;
+    /**
+     * @internal
+     * Adds a session ID to the cache and maintains the cache size.
+     * Uses a FIFO approach to remove the oldest session ID when exceeding max size.
+     * @param sessionId
+     */
+    protected addMySessionIdToCache(sessionId: string): void;
+    /**
+     * Retrieves and caches the current push client session ID.
+     * Returns null if not connected or session is invalid.
+     *
+     * @internal
+     * @returns The current session ID or null
+     */
+    protected getCurrentPushSessionId(): string | null;
+    /**
+     * Registers event listeners on the PushClient and initializes state.
+     *
+     * @internal
+     */
+    protected registerListeners(): void;
+    /**
      * Adds a new subscriber instance to this manager.
      *
      * @internal
@@ -2008,6 +2049,13 @@ declare class PushClientManager {
      * @param subscribedInstance - The subscribed instance to remove
      */
     removeSubscriber(subscribedInstance: PushSubscribedInstance): void;
+    /**
+     * Cache of session IDs that belong to the current user.
+     * Used for duplicate detection and session validation.
+     *
+     * @internal
+     */
+    private cachedSessionIds;
 }
 declare module "./push-client" {
     interface PushClient {
@@ -2036,6 +2084,7 @@ type CallsNotificationEvents = {
     callRemoved: string;
     partyLeft: string;
     inCallsQueue: boolean;
+    isOnline: boolean;
 };
 
 declare class AuthenticationModuleImpl<T extends string = string, C extends Record<string, any> & {
@@ -3247,11 +3296,16 @@ declare class CallNotificationManager {
     private agentAuthenticate;
     constructor(opts: AgentPushNotificationsOpts);
     get isOnQueue(): boolean;
+    get isOnline(): boolean;
     protected pushClientManager: PushClientManager;
     protected scriptLoader: ExternalScriptLoader<any>;
     initialize(): Promise<void>;
     protected initializeCallsNotifications(): Promise<void>;
     switchQueue(): Promise<void>;
+    /**
+    * Transforms Promise Manager errors to VideoEngager Agent errors
+    */
+    protected handlerErrors: (error: unknown) => VideoEngagerAgentError;
     acceptCall(visitorId: string): Promise<void>;
     rejectCall(visitorId: string): Promise<void>;
     protected registerPushNotificationEvents(): Promise<void>;
@@ -3442,6 +3496,13 @@ declare class VideoEngagerAgent<T extends AuthProviderTypes = 'generic'> {
      * ```
      */
     setUiHandler(uiHandler?: VeAgentUiHandlers): void;
+    private onCloseHandler;
+    protected get handlersUiFromConfigs(): VeAgentUiHandlers;
+    protected uiHandlers: {
+        openIframe: (url: string, options: VeAgentOptions<AuthProviderTypes>) => void | Promise<void>;
+        closeIframe: (configs: VeAgentOptions<AuthProviderTypes>) => void | Promise<void>;
+        getIframe: (configs: VeAgentOptions<AuthProviderTypes>) => HTMLIFrameElement | Promise<HTMLIFrameElement | null> | null;
+    };
     /**
      * Initiates a video call with the VideoEngager widget
      *
@@ -3579,6 +3640,7 @@ declare class VideoEngagerAgent<T extends AuthProviderTypes = 'generic'> {
      * ```
      */
     isOnQueue(): boolean;
+    isOnline(): boolean;
     /**
      * Accepts an incoming call notification
      * @beta
@@ -3699,7 +3761,7 @@ declare class VideoEngagerAgent<T extends AuthProviderTypes = 'generic'> {
             visitorId: string;
             acceptedByUser?: string;
             acceptedByMyOtherDevice?: string;
-        }] | [type: "callRemoved", payload: string] | [type: "partyLeft", payload: string] | [type: "inCallsQueue", payload: boolean]) => void | Promise<void>, options?: {
+        }] | [type: "callRemoved", payload: string] | [type: "partyLeft", payload: string] | [type: "inCallsQueue", payload: boolean] | [type: "isOnline", payload: boolean]) => void | Promise<void>, options?: {
             async?: boolean;
         } | undefined): () => void;
         <K extends "initialized" | "sessionStarted" | "sessionEnded" | "sessionFailed" | "callStateUpdated" | "cleanup" | "iframeStateChanged" | keyof CallsNotificationEvents>(event: K, handler: K extends "initialized" | "sessionStarted" | "sessionEnded" | "sessionFailed" | "callStateUpdated" | "cleanup" | "iframeStateChanged" | keyof CallsNotificationEvents ? (payload: VeEventMap[K]) => void | Promise<void> : never, options?: {
@@ -3710,7 +3772,7 @@ declare class VideoEngagerAgent<T extends AuthProviderTypes = 'generic'> {
             visitorId: string;
             acceptedByUser?: string;
             acceptedByMyOtherDevice?: string;
-        }] | [type: "callRemoved", payload: string] | [type: "partyLeft", payload: string] | [type: "inCallsQueue", payload: boolean]) => void | Promise<void>, options?: {
+        }] | [type: "callRemoved", payload: string] | [type: "partyLeft", payload: string] | [type: "inCallsQueue", payload: boolean] | [type: "isOnline", payload: boolean]) => void | Promise<void>, options?: {
             async?: boolean;
         } | undefined): () => void;
     };
@@ -3987,6 +4049,22 @@ declare class VideoEngagerAgent<T extends AuthProviderTypes = 'generic'> {
      */
     static isOnQueue(): ReturnType<VideoEngagerAgent['isOnQueue']>;
     /**
+     * Static method to check online status (Standalone Mode Only)
+     * Always delegates to the current singleton instance
+     * @beta
+     *
+     * @returns True if agent is online
+     * @throws {VideoEngagerAgentError} When agent is not initialized or not in standalone mode
+     *
+     * @example
+     * ```typescript
+     * import { VideoEngagerAgent } from '@videoengager/agent';
+     *
+     * const isOnline = VideoEngagerAgent.isOnline();
+     * ```
+     */
+    static isOnline(): ReturnType<VideoEngagerAgent['isOnline']>;
+    /**
      * Destroys the singleton instance and cleans up all resources
      * Use this for complete cleanup when the agent will no longer be used in the application
      *
@@ -4003,7 +4081,6 @@ declare class VideoEngagerAgent<T extends AuthProviderTypes = 'generic'> {
      * ```
      */
     static destroy(): Promise<void>;
-    protected get handlersUi(): VeAgentUiHandlers;
 }
 /**
  * Initialize the VideoEngager Agent with configuration
@@ -4111,7 +4188,7 @@ declare const on: {
         visitorId: string;
         acceptedByUser?: string;
         acceptedByMyOtherDevice?: string;
-    }] | [type: "callRemoved", payload: string] | [type: "partyLeft", payload: string] | [type: "inCallsQueue", payload: boolean]) => void | Promise<void>, options?: {
+    }] | [type: "callRemoved", payload: string] | [type: "partyLeft", payload: string] | [type: "inCallsQueue", payload: boolean] | [type: "isOnline", payload: boolean]) => void | Promise<void>, options?: {
         async?: boolean;
     } | undefined): () => void;
     <K extends "initialized" | "sessionStarted" | "sessionEnded" | "sessionFailed" | "callStateUpdated" | "cleanup" | "iframeStateChanged" | keyof CallsNotificationEvents>(event: K, handler: K extends "initialized" | "sessionStarted" | "sessionEnded" | "sessionFailed" | "callStateUpdated" | "cleanup" | "iframeStateChanged" | keyof CallsNotificationEvents ? (payload: VeEventMap[K]) => void | Promise<void> : never, options?: {
@@ -4122,7 +4199,7 @@ declare const on: {
         visitorId: string;
         acceptedByUser?: string;
         acceptedByMyOtherDevice?: string;
-    }] | [type: "callRemoved", payload: string] | [type: "partyLeft", payload: string] | [type: "inCallsQueue", payload: boolean]) => void | Promise<void>, options?: {
+    }] | [type: "callRemoved", payload: string] | [type: "partyLeft", payload: string] | [type: "inCallsQueue", payload: boolean] | [type: "isOnline", payload: boolean]) => void | Promise<void>, options?: {
         async?: boolean;
     } | undefined): () => void;
 };
@@ -4316,5 +4393,29 @@ declare const switchQueue: typeof VideoEngagerAgent.switchQueue;
  * ```
  */
 declare const isOnQueue: typeof VideoEngagerAgent.isOnQueue;
+/**
+ * Check if agent is currently online (Standalone Mode Only)
+ *
+ * This method is safe to use even after destroy() - it always delegates to the current instance
+ *
+ * Some Methods may depend on online status to function properly - such as switching queue status.
+ * @beta
+ *
+ * ⚠️ **Standalone Mode Only** - Requires `standaloneMode: true` with `authMethod: 'generic' | 'token'`
+ *
+ * @example
+ * ```typescript
+ * import { isOnline, switchQueue } from '@videoengager/agent';
+ *
+ * if (isOnline()) {
+ *   console.log('Agent is connected to notification server');
+ *   // Safe to perform queue operations
+ *   await switchQueue();
+ * } else {
+ *   console.log('Agent is offline - waiting for connection');
+ * }
+ * ```
+ */
+declare const isOnline: typeof VideoEngagerAgent.isOnline;
 
-export { VEErrorCodes, VEErrorDetails, VERSION, VideoEngagerAgent, VideoEngagerAgentError, acceptCall, agentSettings, call, VideoEngagerAgent as default, destroy, endCall, getCurrentCallState, getDisplayName, getInstance, getReceivedCalls, init, isIframeOpened, isInitialized, isOnQueue, off, on, rejectCall, setUiHandler, switchQueue };
+export { VEErrorCodes, VEErrorDetails, VERSION, VideoEngagerAgent, VideoEngagerAgentError, acceptCall, agentSettings, call, VideoEngagerAgent as default, destroy, endCall, getCurrentCallState, getDisplayName, getInstance, getReceivedCalls, init, isIframeOpened, isInitialized, isOnQueue, isOnline, off, on, rejectCall, setUiHandler, switchQueue };
