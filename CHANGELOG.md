@@ -1,3 +1,11 @@
+## v6.2.4
+
+# Changes
+
+Improvement and fixes
+
+---
+
 ## v6.2.3
 
 # Changes
