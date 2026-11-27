@@ -1,6 +1,6 @@
-![Product update v6.2.6](https://github.com/VideoEngager/videoengager-agent-sdk/releases/download/v6.2.6/RELEASE_IMAGE.png)
+![Product update v6.2.7](https://github.com/VideoEngager/videoengager-agent-sdk/releases/download/v6.2.7/RELEASE_IMAGE.png)
 
-## Product Update v6.2.6
+## Product Update v6.2.7
 
 ### Changes
 
